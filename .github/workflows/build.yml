@@ -1,0 +1,56 @@
+name: Build rtl8192eu Driver for Arch Linux
+
+on:
+  push:
+    branches: [ "*" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    strategy:
+      matrix:
+        kernel: [linux, linux-zen]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize pacman keyring and install dependencies
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm git make bc dkms ${{ matrix.kernel }} ${{ matrix.kernel }}-headers
+
+      - name: Build kernel module
+        run: |
+          # Detect the exact kernel version directory according to the matrix variant
+          if [ "${{ matrix.kernel }}" = "linux" ]; then
+            KVER=$(ls /usr/lib/modules/ | grep -E 'arch' | head -n 1)
+          else
+            KVER=$(ls /usr/lib/modules/ | grep -E 'zen' | head -n 1)
+          fi
+          
+          echo "Building for kernel version: $KVER"
+          
+          # Verify that the kernel headers path actually exists
+          if [ -z "$KVER" ] || [ ! -d "/usr/lib/modules/$KVER/build" ]; then
+            echo "Error: Kernel headers directory not found for ${{ matrix.kernel }}!"
+            exit 1
+          fi
+
+          # Clean previous builds and compile pointing directly to the Arch kernel headers
+          make clean || true
+          make KVER=$KVER KSRC=/usr/lib/modules/$KVER/build
+
+      - name: Prepare build artifacts
+        run: |
+          mkdir -p compiled-driver
+          cp *.ko compiled-driver/
+
+      - name: Upload compiled module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtl8192eu-${{ matrix.kernel }}
+          path: compiled-driver/*.ko
